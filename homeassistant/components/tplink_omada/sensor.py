@@ -113,18 +113,17 @@ async def async_setup_entry(
         entities: list[Entity] = []
         entities.extend(
             OmadaDevicePortSensorEntity[
-                OmadaSwitchPortCoordinator, OmadaSwitch, OmadaSwitchPortDetails, OmadaSwitchPortStatus
+                OmadaSwitchPortCoordinator, OmadaSwitch, OmadaSwitchPortDetails
             ](
                 coordinator,
                 switch,
                 port,
-                {p.port: p.port_status for p in switch.ports}[port.port],
                 port.port_id,
                 desc,
                 port_name=_get_switch_port_base_name(port),
             )
             for port in coordinator.data.values()
-            for desc in SWITCH_PORT_POE_DETAILS_SENSORS
+            for desc in SWITCH_PORT_DETAILS_SENSORS
             if desc.exists_func(switch, port)
         )
         async_add_entities(entities)
@@ -148,29 +147,26 @@ def _get_switch_port_base_name(port: OmadaSwitchPortDetails) -> str:
 
 @dataclass(frozen=True, kw_only=True)
 class OmadaDevicePortSensorEntityDescription(
-    SensorEntityDescription, Generic[TCoordinator, TDevice, TPort, TPortS]
+    SensorEntityDescription, Generic[TCoordinator, TDevice, TPort]
 ):
     """Entity description for a sensor derived from a network port on an Omada device."""
 
     exists_func: Callable[[TDevice, TPort], bool] = lambda _, p: True
-    coordinator_update_func: Callable[[TCoordinator, TDevice, TPort, TPortS], OmadaSwitchPortUpdateReturn]
-    update_func: Callable[[TPort | None, TPortS | None], StateType]
+    coordinator_update_func: Callable[[TCoordinator, TDevice, TPort], TPort | None]
+    update_func: Callable[[TPort | None], StateType]
 
 @dataclass(frozen=True, kw_only=True)
 class OmadaSwitchPortSensorEntityDescription(
     OmadaDevicePortSensorEntityDescription[
-        OmadaSwitchPortCoordinator, OmadaSwitch, OmadaSwitchPortDetails, OmadaSwitchPortStatus
+        OmadaSwitchPortCoordinator, OmadaSwitch, OmadaSwitchPortDetails
     ]
 ):
     """Entity description for a toggle switch for a feature of a Port on an Omada Switch."""
 
     coordinator_update_func: Callable[
-        [OmadaSwitchPortCoordinator, OmadaSwitch, OmadaSwitchPortDetails, OmadaSwitchPortStatus],
-        OmadaSwitchPortUpdateReturn
-    ] = lambda coord, _, port, __: OmadaSwitchPortUpdateReturn(
-        port_details=coord.data.get(port.port_id),
-        port_status={p.port: p.port_status for p in coord._network_switch.ports}.get(port.port)
-    )
+        [OmadaSwitchPortCoordinator, OmadaSwitch, OmadaSwitchPortDetails],
+        OmadaSwitchPortDetails | None
+    ] = lambda coord, _, port: coord.data.get(port.port_id)
 
 @dataclass(frozen=True, kw_only=True)
 class OmadaDeviceSensorEntityDescription(SensorEntityDescription):
@@ -178,12 +174,6 @@ class OmadaDeviceSensorEntityDescription(SensorEntityDescription):
 
     exists_func: Callable[[OmadaListDevice], bool] = lambda _: True
     update_func: Callable[[OmadaListDevice], StateType]
-
-@dataclass()
-class OmadaSwitchPortUpdateReturn(Generic[TPort, TPortS]):
-    """Return type for coordinator update function for switch port sensors."""
-    port_details: TPort | None
-    port_status: TPortS | None
 
 
 OMADA_DEVICE_SENSORS: list[OmadaDeviceSensorEntityDescription] = [
@@ -214,7 +204,7 @@ OMADA_DEVICE_SENSORS: list[OmadaDeviceSensorEntityDescription] = [
 ]
 
 
-SWITCH_PORT_POE_DETAILS_SENSORS: list[OmadaSwitchPortSensorEntityDescription] = [
+SWITCH_PORT_DETAILS_SENSORS: list[OmadaSwitchPortSensorEntityDescription] = [
     OmadaSwitchPortSensorEntityDescription(
         key="poe_usage",
         translation_key="poe_usage",
@@ -228,8 +218,23 @@ SWITCH_PORT_POE_DETAILS_SENSORS: list[OmadaSwitchPortSensorEntityDescription] = 
         entity_category=EntityCategory.DIAGNOSTIC,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfPower.WATT,
-        update_func=lambda _, s: s.poe_power if s else None
+        update_func=lambda p: p.port_status.poe_power if p else None
     )
+
+    # Uncomment below to add more sensors for ports
+
+    #OmadaSwitchPortSensorEntityDescription(
+    #    key="",                # name of the sensor after the port name
+    #    translation_key="",
+    #    exists_func=(
+    #        lambda d, p: # condition for whether this sensor should be created for a given port
+    #    ),
+    #    entity_category=EntityCategory.DIAGNOSTIC,
+    #    state_class=SensorStateClass.MEASUREMENT,
+    #    native_unit_of_measurement="",  # unit of measurement, if applicable
+    #    update_func=lambda p: # value to return for the sensor, given the latest port details
+    #)
+
 ]
 
 
@@ -260,12 +265,12 @@ class OmadaDeviceSensor(OmadaDeviceEntity[OmadaDevicesCoordinator], SensorEntity
 class OmadaDevicePortSensorEntity(
     OmadaDeviceEntity[TCoordinator],
     SensorEntity,
-    Generic[TCoordinator, TDevice, TPort, TPortS],
+    Generic[TCoordinator, TDevice, TPort],
 ):
     """Generic sensor entity for a Network Port of an Omada Device."""
 
     entity_description: OmadaDevicePortSensorEntityDescription[
-        TCoordinator, TDevice, TPort, TPortS
+        TCoordinator, TDevice, TPort
     ]
 
     def __init__(
@@ -273,10 +278,9 @@ class OmadaDevicePortSensorEntity(
         coordinator: TCoordinator,
         device: TDevice,
         port_details: TPort,
-        port_status: TPortS,
         port_id: str,
         entity_description: OmadaDevicePortSensorEntityDescription[
-            TCoordinator, TDevice, TPort, TPortS
+            TCoordinator, TDevice, TPort
         ],
         port_name: str | None = None,
     ) -> None:
@@ -285,7 +289,6 @@ class OmadaDevicePortSensorEntity(
         self.entity_description = entity_description
         self._device = device
         self._port_details = port_details
-        self._port_status = port_status
         self._attr_unique_id = f"{device.mac}_{port_id}_{entity_description.key}"
         self._attr_translation_placeholders = {"port_name": port_name or port_id}
 
@@ -301,18 +304,15 @@ class OmadaDevicePortSensorEntity(
         return bool(
             super().available
             and self._port_details
-            and self._port_status
             and self.entity_description.exists_func(self._device, self._port_details)
         )
 
     @property
     def native_value(self) -> StateType:
         latest_port_update = self.entity_description.coordinator_update_func(
-            self.coordinator, self._device, self._port_details, self._port_status
+            self.coordinator, self._device, self._port_details
         )
-        if latest_port_update.port_details:
-            self._port_details = latest_port_update.port_details
-        if latest_port_update.port_status:
-            self._port_status = latest_port_update.port_status
+        if latest_port_update:
+            self._port_details = latest_port_update
 
-        return self.entity_description.update_func(latest_port_update.port_details, latest_port_update.port_status)
+        return self.entity_description.update_func(latest_port_update)
