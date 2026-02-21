@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
 from tplink_omada_client.definitions import (
     DeviceStatus,
     DeviceStatusCategory,
-    GatewayPortMode,
-    PoEMode,
     PortType,
 )
 from tplink_omada_client.devices import (
     OmadaDevice,
-    OmadaGateway,
-    OmadaGatewayPortConfig,
-    OmadaGatewayPortStatus,
     OmadaListDevice,
     OmadaSwitch,
     OmadaSwitchPortDetails,
