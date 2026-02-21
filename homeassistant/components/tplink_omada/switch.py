@@ -269,7 +269,7 @@ class OmadaDevicePortSwitchEntity(
     SwitchEntity,
     Generic[TCoordinator, TDevice, TPort],
 ):
-    """Generic toggle switch entity for a Netork Port of an Omada Device."""
+    """Generic toggle switch entity for a Network Port of an Omada Device."""
 
     entity_description: OmadaDevicePortSwitchEntityDescription[
         TCoordinator, TDevice, TPort

@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
-from tplink_omada_client.definitions import DeviceStatus, DeviceStatusCategory
-from tplink_omada_client.devices import OmadaListDevice
+from tplink_omada_client.definitions import (
+    DeviceStatus,
+    DeviceStatusCategory,
+    GatewayPortMode,
+    PoEMode,
+    PortType,
+)
+from tplink_omada_client.devices import (
+    OmadaDevice,
+    OmadaGateway,
+    OmadaGatewayPortConfig,
+    OmadaGatewayPortStatus,
+    OmadaListDevice,
+    OmadaSwitch,
+    OmadaSwitchPortDetails,
+    OmadaSwitchPortStatus
+)
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -14,15 +30,22 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, EntityCategory
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from . import OmadaConfigEntry
 from .const import OmadaDeviceStatus
-from .coordinator import OmadaDevicesCoordinator
+from .controller import OmadaSwitchPortCoordinator
+from .coordinator import OmadaDevicesCoordinator, OmadaCoordinator
 from .entity import OmadaDeviceEntity
+
+TPort = TypeVar("TPort")
+TPortS = TypeVar("TPortS")
+TDevice = TypeVar("TDevice", bound="OmadaDevice")
+TCoordinator = TypeVar("TCoordinator", bound="OmadaCoordinator[Any]")
 
 PARALLEL_UPDATES = 0
 
@@ -83,6 +106,76 @@ async def async_setup_entry(
         _create_device_sensor_entities,
     )
 
+    async def _create_switch_port_entities(
+        device: OmadaListDevice,
+    ) -> None:
+        """Create entities for a switch's ports."""
+        omada_client = controller.omada_client
+        switch = await omada_client.get_switch(device)
+        coordinator = controller.get_switch_port_coordinator(switch)
+        await coordinator.async_request_refresh()
+
+        entities: list[Entity] = []
+        entities.extend(
+            OmadaDevicePortSensorEntity[
+                OmadaSwitchPortCoordinator, OmadaSwitch, OmadaSwitchPortDetails, OmadaSwitchPortStatus
+            ](
+                coordinator,
+                switch,
+                port,
+                {p.port: p.port_status for p in switch.ports}[port.port],
+                port.port_id,
+                desc,
+                port_name=_get_switch_port_base_name(port),
+            )
+            for port in coordinator.data.values()
+            for desc in SWITCH_PORT_POE_DETAILS_SENSORS
+            if desc.exists_func(switch, port)
+        )
+        async_add_entities(entities)
+
+    # Register switch port entities for switches that are connected, such that we can determine the port information
+    await controller.async_register_device_entities(
+        device_filter=lambda d: (
+            d.type == "switch" and d.status_category == DeviceStatusCategory.CONNECTED
+        ),
+        entity_callback=_create_switch_port_entities,
+    )
+
+
+def _get_switch_port_base_name(port: OmadaSwitchPortDetails) -> str:
+    """Get display name for a switch port."""
+
+    if port.name == f"Port{port.port}":
+        return str(port.port)
+    return f"{port.port} ({port.name})"
+
+
+@dataclass(frozen=True, kw_only=True)
+class OmadaDevicePortSensorEntityDescription(
+    SensorEntityDescription, Generic[TCoordinator, TDevice, TPort, TPortS]
+):
+    """Entity description for a sensor derived from a network port on an Omada device."""
+
+    exists_func: Callable[[TDevice, TPort], bool] = lambda _, p: True
+    coordinator_update_func: Callable[[TCoordinator, TDevice, TPort, TPortS], OmadaSwitchPortUpdateReturn]
+    update_func: Callable[[TPort | None, TPortS | None], StateType]
+
+@dataclass(frozen=True, kw_only=True)
+class OmadaSwitchPortSensorEntityDescription(
+    OmadaDevicePortSensorEntityDescription[
+        OmadaSwitchPortCoordinator, OmadaSwitch, OmadaSwitchPortDetails, OmadaSwitchPortStatus
+    ]
+):
+    """Entity description for a toggle switch for a feature of a Port on an Omada Switch."""
+
+    coordinator_update_func: Callable[
+        [OmadaSwitchPortCoordinator, OmadaSwitch, OmadaSwitchPortDetails, OmadaSwitchPortStatus],
+        OmadaSwitchPortUpdateReturn
+    ] = lambda coord, _, port, __: OmadaSwitchPortUpdateReturn(
+        port_details=coord.data.get(port.port_id),
+        port_status={p.port: p.port_status for p in coord._network_switch.ports}.get(port.port)
+    )
 
 @dataclass(frozen=True, kw_only=True)
 class OmadaDeviceSensorEntityDescription(SensorEntityDescription):
@@ -90,6 +183,12 @@ class OmadaDeviceSensorEntityDescription(SensorEntityDescription):
 
     exists_func: Callable[[OmadaListDevice], bool] = lambda _: True
     update_func: Callable[[OmadaListDevice], StateType]
+
+@dataclass()
+class OmadaSwitchPortUpdateReturn(Generic[TPort, TPortS]):
+    """Return type for coordinator update function for switch port sensors."""
+    port_details: TPort | None
+    port_status: TPortS | None
 
 
 OMADA_DEVICE_SENSORS: list[OmadaDeviceSensorEntityDescription] = [
@@ -120,6 +219,25 @@ OMADA_DEVICE_SENSORS: list[OmadaDeviceSensorEntityDescription] = [
 ]
 
 
+SWITCH_PORT_POE_DETAILS_SENSORS: list[OmadaSwitchPortSensorEntityDescription] = [
+    OmadaSwitchPortSensorEntityDescription(
+        key="poe_usage",
+        translation_key="poe_usage",
+        exists_func=(
+            lambda d, p: (
+                d.device_capabilities.supports_poe
+                and p.supports_poe
+                and p.type != PortType.SFP
+            )
+        ),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        update_func=lambda _, s: s.poe_power if s else None
+    )
+]
+
+
 class OmadaDeviceSensor(OmadaDeviceEntity[OmadaDevicesCoordinator], SensorEntity):
     """Sensor for property of a generic Omada device."""
 
@@ -142,3 +260,64 @@ class OmadaDeviceSensor(OmadaDeviceEntity[OmadaDevicesCoordinator], SensorEntity
         return self.entity_description.update_func(
             self.coordinator.data[self.device.mac]
         )
+
+
+class OmadaDevicePortSensorEntity(
+    OmadaDeviceEntity[TCoordinator],
+    SensorEntity,
+    Generic[TCoordinator, TDevice, TPort, TPortS],
+):
+    """Generic sensor entity for a Network Port of an Omada Device."""
+
+    entity_description: OmadaDevicePortSensorEntityDescription[
+        TCoordinator, TDevice, TPort, TPortS
+    ]
+
+    def __init__(
+        self,
+        coordinator: TCoordinator,
+        device: TDevice,
+        port_details: TPort,
+        port_status: TPortS,
+        port_id: str,
+        entity_description: OmadaDevicePortSensorEntityDescription[
+            TCoordinator, TDevice, TPort, TPortS
+        ],
+        port_name: str | None = None,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator, device)
+        self.entity_description = entity_description
+        self._device = device
+        self._port_details = port_details
+        self._port_status = port_status
+        self._attr_unique_id = f"{device.mac}_{port_id}_{entity_description.key}"
+        self._attr_translation_placeholders = {"port_name": port_name or port_id}
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to hass."""
+        await super().async_added_to_hass()
+        self.native_value
+
+
+    @property
+    def available(self) -> bool:
+        """Return true if entity is available."""
+        return bool(
+            super().available
+            and self._port_details
+            and self._port_status
+            and self.entity_description.exists_func(self._device, self._port_details)
+        )
+
+    @property
+    def native_value(self) -> StateType:
+        latest_port_update = self.entity_description.coordinator_update_func(
+            self.coordinator, self._device, self._port_details, self._port_status
+        )
+        if latest_port_update.port_details:
+            self._port_details = latest_port_update.port_details
+        if latest_port_update.port_status:
+            self._port_status = latest_port_update.port_status
+
+        return self.entity_description.update_func(latest_port_update.port_details, latest_port_update.port_status)
