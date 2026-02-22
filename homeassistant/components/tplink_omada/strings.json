@@ -38,12 +38,16 @@
         "data": {
           "host": "[%key:common::config_flow::data::host%]",
           "password": "[%key:common::config_flow::data::password%]",
+          "port_poe": "Port PoE monitoring",
+          "port_speed": "Port speed monitoring",
           "username": "[%key:common::config_flow::data::username%]",
           "verify_ssl": "[%key:common::config_flow::data::verify_ssl%]"
         },
         "data_description": {
           "host": "URL of the management interface of your TP-Link Omada controller.",
           "password": "Password for the Omada controller user.",
+          "port_poe": "Enable monitoring of PoE ports. Enabling this may cause increased memory usage.",
+          "port_speed": "Enable monitoring of port speeds. Enabling this may cause increased memory usage.",
           "username": "Username for the Omada controller user.",
           "verify_ssl": "Uncheck this box if you are using the default self-signed certificate on the controller."
         },
@@ -67,6 +71,12 @@
       }
     },
     "sensor": {
+      "bytes_received": {
+        "name": "Port {port_name} received bytes"
+      },
+      "bytes_transmitted": {
+        "name": "Port {port_name} transmitted bytes"
+      },
       "cpu_usage": {
         "name": "CPU usage"
       },
@@ -88,6 +98,9 @@
       },
       "poe_usage": {
         "name": "Port {port_name} PoE usage"
+      },
+      "speed_defined": {
+        "name": "Port {port_name} defined speed"
       }
     },
     "switch": {

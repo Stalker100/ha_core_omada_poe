@@ -21,14 +21,14 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfDataRate, UnitOfPower
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import Entity, callback
+from homeassistant.helpers.entity import Entity
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
 from . import OmadaConfigEntry
-from .const import OmadaDeviceStatus
+from .const import CONF_PORT_POE, CONF_PORT_SPEED, OmadaDeviceStatus
 from .controller import OmadaSwitchPortCoordinator
 from .coordinator import OmadaCoordinator, OmadaDevicesCoordinator
 from .entity import OmadaDeviceEntity
@@ -70,6 +70,19 @@ def _map_device_status(device: OmadaListDevice) -> str | None:
     return display_status.value if display_status else None
 
 
+def _map_port_speed_id_to_speed(speed_id: int) -> int | None:
+    """Map the API port speed ID to the actual speed in Megabits per second."""
+    return {
+        -1: None,
+        0: None,
+        1: 10,
+        2: 100,
+        3: 1_000,
+        4: 2_500,
+        5: 10_000,
+    }.get(speed_id)
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: OmadaConfigEntry,
@@ -101,6 +114,14 @@ async def async_setup_entry(
         device: OmadaListDevice,
     ) -> None:
         """Create entities for a switch's ports."""
+        descriptions = []
+        if config_entry.data.get(CONF_PORT_POE):
+            descriptions.extend(SWITCH_PORT_POE_DETAILS_SENSORS)
+        if config_entry.data.get(CONF_PORT_SPEED):
+            descriptions.extend(SWITCH_PORT_SPEED_DETAILS_SENSORS)
+
+        if not descriptions:
+            return
         omada_client = controller.omada_client
         switch = await omada_client.get_switch(device)
         coordinator = controller.get_switch_port_coordinator(switch)
@@ -121,7 +142,7 @@ async def async_setup_entry(
                 port_name=_get_switch_port_base_name(port),
             )
             for port in coordinator.data.values()
-            for desc in SWITCH_PORT_DETAILS_SENSORS
+            for desc in descriptions
             if desc.exists_func(switch, port)
         )
         async_add_entities(entities)
@@ -150,7 +171,7 @@ class OmadaDevicePortSensorEntityDescription(
 
     exists_func: Callable[[TDevice, TPort], bool] = lambda _, p: True
     coordinator_update_func: Callable[[TCoordinator, TDevice, TPort], TPort | None]
-    update_func: Callable[[TPort], StateType]
+    update_func: Callable[[TPort | None], StateType]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -203,7 +224,7 @@ OMADA_DEVICE_SENSORS: list[OmadaDeviceSensorEntityDescription] = [
 ]
 
 
-SWITCH_PORT_DETAILS_SENSORS: list[OmadaSwitchPortSensorEntityDescription] = [
+SWITCH_PORT_POE_DETAILS_SENSORS: list[OmadaSwitchPortSensorEntityDescription] = [
     OmadaSwitchPortSensorEntityDescription(
         key="poe_usage",
         translation_key="poe_usage",
@@ -219,18 +240,40 @@ SWITCH_PORT_DETAILS_SENSORS: list[OmadaSwitchPortSensorEntityDescription] = [
         native_unit_of_measurement=UnitOfPower.WATT,
         update_func=lambda p: p.port_status.poe_power if p else None,
     )
-    # Uncomment below to add more sensors for ports
+]
+
+SWITCH_PORT_SPEED_DETAILS_SENSORS: list[OmadaSwitchPortSensorEntityDescription] = [
     # OmadaSwitchPortSensorEntityDescription(
-    #    key="",                # name of the sensor after the port name
-    #    translation_key="",
-    #    exists_func=(
-    #        lambda d, p: # condition for whether this sensor should be created for a given port
-    #    ),
-    #    entity_category=EntityCategory.DIAGNOSTIC,
-    #    state_class=SensorStateClass.MEASUREMENT,
-    #    native_unit_of_measurement="",  # unit of measurement, if applicable
-    #    update_func=lambda p: # value to return for the sensor, given the latest port details
-    # )
+    #     key="received",
+    #     translation_key="bytes_received",
+    #     exists_func=(lambda d, p: True),
+    #     entity_category=EntityCategory.DIAGNOSTIC,
+    #     state_class=SensorStateClass.MEASUREMENT,
+    #     native_unit_of_measurement=UnitOfInformation.BYTES,
+    #     update_func=lambda p: p.port_status.bytes_rx if p else None,
+    # ),
+    # OmadaSwitchPortSensorEntityDescription(
+    #     key="transmitted",
+    #     translation_key="bytes_transmitted",
+    #     exists_func=(lambda d, p: True),
+    #     entity_category=EntityCategory.DIAGNOSTIC,
+    #     state_class=SensorStateClass.MEASUREMENT,
+    #     native_unit_of_measurement=UnitOfInformation.BYTES,
+    #     update_func=lambda p: p.port_status.bytes_tx if p else None,
+    # ),
+    OmadaSwitchPortSensorEntityDescription(
+        key="max_speed",
+        translation_key="speed_defined",
+        exists_func=(lambda d, p: True),
+        entity_category=EntityCategory.DIAGNOSTIC,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfDataRate.MEGABITS_PER_SECOND,
+        update_func=lambda p: (
+            _map_port_speed_id_to_speed(p.port_status.link_speed)
+            if p and p.port_status.link_status == 1
+            else None
+        ),
+    ),
 ]
 
 
@@ -321,8 +364,8 @@ class OmadaDevicePortSensorEntity(
 
         return self.entity_description.update_func(latest_port_update)
 
-    @callback
-    def _handle_coordinator_update(self) -> None:
-        """Handle updated data from the coordinator."""
-        self._do_update()
-        self.async_write_ha_state()
+    # @callback
+    # def _handle_coordinator_update(self) -> None:
+    #     """Handle updated data from the coordinator."""
+    #     self._do_update()
+    #     self.async_write_ha_state()

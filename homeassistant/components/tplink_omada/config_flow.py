@@ -27,7 +27,7 @@ from homeassistant.helpers.aiohttp_client import (
     async_get_clientsession,
 )
 
-from .const import DOMAIN
+from .const import CONF_PORT_POE, CONF_PORT_SPEED, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +39,8 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
         vol.Required(CONF_VERIFY_SSL, default=True): bool,
         vol.Required(CONF_USERNAME): str,
         vol.Required(CONF_PASSWORD): str,
+        vol.Required(CONF_PORT_POE): bool,
+        vol.Required(CONF_PORT_SPEED): bool,
     }
 )
 

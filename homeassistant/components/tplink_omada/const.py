@@ -1,8 +1,11 @@
 """Constants for the TP-Link Omada integration."""
 
 from enum import StrEnum
+from typing import Final
 
 DOMAIN = "tplink_omada"
+CONF_PORT_POE: Final = "port_poe"
+CONF_PORT_SPEED: Final = "port_speed"
 
 
 class OmadaDeviceStatus(StrEnum):

@@ -9,6 +9,12 @@
       }
     },
     "sensor": {
+      "bytes_received": {
+        "default": "mdi:download-network"
+      },
+      "bytes_transmitted": {
+        "default": "mdi:upload-network"
+      },
       "cpu_usage": {
         "default": "mdi:cpu-32-bit"
       },
@@ -17,6 +23,9 @@
       },
       "poe_usage": {
         "default": "mdi:ethernet"
+      },
+      "speed_defined": {
+        "default": "mdi:check-network"
       }
     },
     "switch": {
