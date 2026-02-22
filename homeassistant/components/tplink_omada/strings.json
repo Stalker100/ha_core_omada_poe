@@ -85,6 +85,9 @@
       },
       "mem_usage": {
         "name": "Memory usage"
+      },
+      "poe_usage": {
+        "name": "Port {port_name} PoE usage"
       }
     },
     "switch": {

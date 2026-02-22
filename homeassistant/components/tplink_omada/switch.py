@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
@@ -64,6 +65,8 @@ async def async_setup_entry(
         coordinator = controller.get_switch_port_coordinator(switch)
         await coordinator.async_request_refresh()
 
+        while not coordinator.data:
+            await asyncio.sleep(1)
         entities: list[Entity] = []
         entities.extend(
             OmadaDevicePortSwitchEntity[
